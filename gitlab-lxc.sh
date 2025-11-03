@@ -1,170 +1,163 @@
 #!/usr/bin/env bash
+source <(curl -fsSL https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/misc/build.func)
+# Copyright (c) 2021-2025 community-scripts ORG
+# License: MIT
+# GitLab CE Installation Script for Proxmox LXC
 
-# Proxmox Storage Diagnostic Script
-# Check available storages for LXC containers and templates
+APP="GitLab-CE"
+var_tags="${var_tags:-git;devops;ci-cd}"
+var_cpu="${var_cpu:-4}"
+var_ram="${var_ram:-8192}"
+var_disk="${var_disk:-30}"
+var_os="${var_os:-debian}"
+var_version="${var_version:-12}"
+var_unprivileged="${var_unprivileged:-1}"
 
-# Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-CYAN='\033[0;36m'
-NC='\033[0m'
+# GitLab specific variables
+GITLAB_EXTERNAL_URL="${GITLAB_EXTERNAL_URL:-http://gitlab.local}"
+GITLAB_ROOT_PASSWORD="${GITLAB_ROOT_PASSWORD:-admin}"
+GITLAB_ROOT_EMAIL="${GITLAB_ROOT_EMAIL:-admin@home.local}"
 
-echo -e "${BLUE}╔═══════════════════════════════════════════════════════════╗${NC}"
-echo -e "${BLUE}║         Proxmox Storage Diagnostic Tool                  ║${NC}"
-echo -e "${BLUE}╚═══════════════════════════════════════════════════════════╝${NC}"
-echo ""
+header_info "$APP"
+variables
+color
+catch_errors
 
-# Check if running on Proxmox
-if ! command -v pveversion &> /dev/null; then
-    echo -e "${RED}[✗] This script must be run on a Proxmox VE host${NC}"
-    exit 1
-fi
+function update_script() {
+  header_info
+  
+  if [ ! -f /etc/gitlab/gitlab.rb ]; then
+    msg_error "No ${APP} Installation Found!"
+    exit
+  fi
+  
+  msg_info "Updating ${APP}"
+  $STD apt-get update
+  $STD apt-get upgrade -y gitlab-ce
+  msg_ok "Updated ${APP}"
+  
+  msg_info "Running GitLab reconfigure"
+  $STD gitlab-ctl reconfigure
+  msg_ok "Updated Successfully!"
+  exit 0
+}
 
-echo -e "${GREEN}[✓] Running on Proxmox VE $(pveversion | grep pve-manager | cut -d'/' -f2)${NC}"
-echo ""
+start
+build_container
+description
 
-# Display all storages
-echo -e "${CYAN}════════════════════════════════════════════════════════════${NC}"
-echo -e "${CYAN}All Available Storages${NC}"
-echo -e "${CYAN}════════════════════════════════════════════════════════════${NC}"
-pvesm status
-echo ""
+msg_info "Setting up Container OS"
+$STD apt-get update
+$STD apt-get install -y \
+  curl \
+  openssh-server \
+  ca-certificates \
+  tzdata \
+  perl \
+  postfix
+msg_ok "Set up Container OS"
 
-# Check storages for container root filesystems
-echo -e "${CYAN}════════════════════════════════════════════════════════════${NC}"
-echo -e "${CYAN}Storages for Container Root Filesystem (rootdir)${NC}"
-echo -e "${CYAN}════════════════════════════════════════════════════════════${NC}"
+msg_info "Installing GitLab Dependencies"
+$STD apt-get install -y \
+  apt-transport-https \
+  gnupg2
+msg_ok "Installed Dependencies"
 
-ROOTDIR_STORAGES=$(pvesm status -content rootdir | awk 'NR>1 {print $1}')
-if [ -z "$ROOTDIR_STORAGES" ]; then
-    echo -e "${RED}[✗] No storages available for container root filesystems${NC}"
-    echo -e "${YELLOW}    You need at least one storage with 'rootdir' content type${NC}"
-else
-    echo -e "${GREEN}[✓] Available storages for container root filesystem:${NC}"
-    for storage in $ROOTDIR_STORAGES; do
-        storage_type=$(pvesm status | grep "^${storage} " | awk '{print $2}')
-        storage_avail=$(pvesm status | grep "^${storage} " | awk '{print $5}')
-        echo -e "    ${GREEN}●${NC} ${YELLOW}$storage${NC} (Type: $storage_type, Available: $storage_avail)"
-    done
-    
-    RECOMMENDED_STORAGE=$(echo "$ROOTDIR_STORAGES" | head -1)
-    echo ""
-    echo -e "${BLUE}💡 Recommended for STORAGE variable: ${YELLOW}$RECOMMENDED_STORAGE${NC}"
-fi
-echo ""
+msg_info "Adding GitLab Repository"
+curl -fsSL https://packages.gitlab.com/install/repositories/gitlab/gitlab-ce/script.deb.sh | bash
+msg_ok "Added GitLab Repository"
 
-# Check storages for templates
-echo -e "${CYAN}════════════════════════════════════════════════════════════${NC}"
-echo -e "${CYAN}Storages for Container Templates (vztmpl)${NC}"
-echo -e "${CYAN}════════════════════════════════════════════════════════════${NC}"
+msg_info "Installing GitLab CE (this may take several minutes)"
+EXTERNAL_URL="$GITLAB_EXTERNAL_URL" $STD apt-get install -y gitlab-ce
+msg_ok "Installed GitLab CE"
 
-TEMPLATE_STORAGES=$(pvesm status -content vztmpl | awk 'NR>1 {print $1}')
-if [ -z "$TEMPLATE_STORAGES" ]; then
-    echo -e "${RED}[✗] No storages available for templates${NC}"
-    echo -e "${YELLOW}    You need at least one storage with 'vztmpl' content type${NC}"
-    echo -e "${YELLOW}    Usually 'local' (type: dir) supports templates${NC}"
-else
-    echo -e "${GREEN}[✓] Available storages for templates:${NC}"
-    for storage in $TEMPLATE_STORAGES; do
-        storage_type=$(pvesm status | grep "^${storage} " | awk '{print $2}')
-        storage_avail=$(pvesm status | grep "^${storage} " | awk '{print $5}')
-        echo -e "    ${GREEN}●${NC} ${YELLOW}$storage${NC} (Type: $storage_type, Available: $storage_avail)"
-    done
-    
-    RECOMMENDED_TEMPLATE_STORAGE=$(echo "$TEMPLATE_STORAGES" | head -1)
-    echo ""
-    echo -e "${BLUE}💡 Recommended for TEMPLATE_STORAGE variable: ${YELLOW}$RECOMMENDED_TEMPLATE_STORAGE${NC}"
-fi
-echo ""
+msg_info "Configuring GitLab"
+cat > /etc/gitlab/initial_root_password <<EOF
+# WARNING: This value is valid only in the following conditions
+#          1. If provided manually (either via \`GITLAB_ROOT_PASSWORD\` environment variable or via \`gitlab_rails['initial_root_password']\` setting in \`gitlab.rb\`, it was provided before database was seeded for the first time (usually, the first reconfigure run).
+#          2. Password hasn't been changed manually, either via UI or via command line.
+#
+#          If the password shown here doesn't work, you must reset the admin password following https://docs.gitlab.com/ee/security/reset_user_password.html#reset-your-root-password.
 
-# Check network bridges
-echo -e "${CYAN}════════════════════════════════════════════════════════════${NC}"
-echo -e "${CYAN}Available Network Bridges${NC}"
-echo -e "${CYAN}════════════════════════════════════════════════════════════${NC}"
+Password: $GITLAB_ROOT_PASSWORD
 
-BRIDGES=$(ip -br link show type bridge | awk '{print $1}')
-if [ -z "$BRIDGES" ]; then
-    echo -e "${RED}[✗] No network bridges found${NC}"
-else
-    echo -e "${GREEN}[✓] Available bridges:${NC}"
-    for bridge in $BRIDGES; do
-        bridge_state=$(ip -br link show $bridge | awk '{print $2}')
-        echo -e "    ${GREEN}●${NC} ${YELLOW}$bridge${NC} (State: $bridge_state)"
-    done
-    
-    RECOMMENDED_BRIDGE=$(echo "$BRIDGES" | head -1)
-    echo ""
-    echo -e "${BLUE}💡 Recommended for BRIDGE variable: ${YELLOW}$RECOMMENDED_BRIDGE${NC}"
-fi
-echo ""
+# NOTE: This file will be automatically deleted in the first reconfigure run after 24 hours.
+EOF
 
-# Check for existing Debian templates
-echo -e "${CYAN}════════════════════════════════════════════════════════════${NC}"
-echo -e "${CYAN}Existing Debian Templates${NC}"
-echo -e "${CYAN}════════════════════════════════════════════════════════════${NC}"
+# Configure GitLab settings
+cat >> /etc/gitlab/gitlab.rb <<EOF
 
-EXISTING_TEMPLATES=0
-for storage in $TEMPLATE_STORAGES; do
-    templates=$(pveam list $storage 2>/dev/null | grep "debian-12" || true)
-    if [ -n "$templates" ]; then
-        echo -e "${GREEN}[✓] Found Debian 12 templates in ${YELLOW}$storage${GREEN}:${NC}"
-        echo "$templates"
-        EXISTING_TEMPLATES=1
-    fi
+# Custom Configuration
+gitlab_rails['initial_root_password'] = '$GITLAB_ROOT_PASSWORD'
+gitlab_rails['gitlab_signup_enabled'] = false
+gitlab_rails['gitlab_default_can_create_group'] = true
+gitlab_rails['gitlab_username_changing_enabled'] = false
+
+# Email configuration
+gitlab_rails['gitlab_email_enabled'] = true
+gitlab_rails['gitlab_email_from'] = '$GITLAB_ROOT_EMAIL'
+gitlab_rails['gitlab_email_display_name'] = 'GitLab'
+gitlab_rails['gitlab_email_reply_to'] = '$GITLAB_ROOT_EMAIL'
+
+# Time zone
+gitlab_rails['time_zone'] = 'Europe/Paris'
+
+# Backup configuration
+gitlab_rails['backup_keep_time'] = 604800
+
+# Performance tuning for LXC
+postgresql['shared_buffers'] = "256MB"
+postgresql['max_worker_processes'] = 8
+sidekiq['max_concurrency'] = 10
+puma['worker_processes'] = 2
+prometheus_monitoring['enable'] = true
+EOF
+
+msg_ok "Configured GitLab"
+
+msg_info "Running GitLab Reconfigure"
+$STD gitlab-ctl reconfigure
+msg_ok "GitLab Reconfigured"
+
+msg_info "Starting GitLab Services"
+$STD gitlab-ctl start
+msg_ok "Started GitLab Services"
+
+msg_info "Waiting for GitLab to be ready"
+sleep 30
+until curl -sf http://localhost/-/readiness > /dev/null 2>&1; do
+  echo "Waiting for GitLab to be ready..."
+  sleep 10
 done
+msg_ok "GitLab is ready"
 
-if [ $EXISTING_TEMPLATES -eq 0 ]; then
-    echo -e "${YELLOW}[!] No Debian 12 templates found${NC}"
-    echo -e "${BLUE}    The script will download it automatically${NC}"
-fi
-echo ""
+msg_info "Setting up root user"
+gitlab-rails runner "user = User.find_by(username: 'root'); user.email = '$GITLAB_ROOT_EMAIL'; user.save!"
+msg_ok "Root user configured"
 
-# Summary and recommendations
-echo -e "${CYAN}════════════════════════════════════════════════════════════${NC}"
-echo -e "${CYAN}📋 Summary & Recommendations${NC}"
-echo -e "${CYAN}════════════════════════════════════════════════════════════${NC}"
+msg_info "Cleaning Up"
+$STD apt-get autoremove -y
+$STD apt-get autoclean -y
+msg_ok "Cleaned"
 
-if [ -n "$ROOTDIR_STORAGES" ] && [ -n "$TEMPLATE_STORAGES" ] && [ -n "$BRIDGES" ]; then
-    echo -e "${GREEN}[✓] Your system is ready for GitLab LXC installation!${NC}"
-    echo ""
-    echo -e "${BLUE}Recommended command to run the script:${NC}"
-    echo ""
-    echo -e "${YELLOW}STORAGE=$RECOMMENDED_STORAGE \\${NC}"
-    echo -e "${YELLOW}TEMPLATE_STORAGE=$RECOMMENDED_TEMPLATE_STORAGE \\${NC}"
-    echo -e "${YELLOW}BRIDGE=$RECOMMENDED_BRIDGE \\${NC}"
-    echo -e "${YELLOW}./gitlab-proxmox-install.sh${NC}"
-    echo ""
-    echo -e "${BLUE}Or for interactive mode:${NC}"
-    echo ""
-    echo -e "${YELLOW}./gitlab-proxmox-interactive.sh${NC}"
-    echo -e "${BLUE}(The interactive script will auto-detect these values)${NC}"
-else
-    echo -e "${RED}[✗] Configuration issues detected:${NC}"
-    [ -z "$ROOTDIR_STORAGES" ] && echo -e "    ${RED}●${NC} No storage for container root filesystem"
-    [ -z "$TEMPLATE_STORAGES" ] && echo -e "    ${RED}●${NC} No storage for templates"
-    [ -z "$BRIDGES" ] && echo -e "    ${RED}●${NC} No network bridges"
-    echo ""
-    echo -e "${YELLOW}Please configure your Proxmox storage before proceeding.${NC}"
-fi
-echo ""
+# Create version file
+GITLAB_VERSION=$(gitlab-rake gitlab:env:info | grep "GitLab information" -A 20 | grep "GitLab:" | awk '{print $2}')
+echo "${GITLAB_VERSION}" > /opt/${APP}_version.txt
 
-# Storage type explanations
-echo -e "${CYAN}════════════════════════════════════════════════════════════${NC}"
-echo -e "${CYAN}💡 Storage Type Guide${NC}"
-echo -e "${CYAN}════════════════════════════════════════════════════════════${NC}"
-echo -e "${BLUE}Common storage types:${NC}"
-echo -e "  ${YELLOW}dir${NC}       - Directory (supports: rootdir, vztmpl, images, etc.)"
-echo -e "  ${YELLOW}lvmthin${NC}   - LVM-Thin (supports: rootdir, images - NO templates)"
-echo -e "  ${YELLOW}zfspool${NC}   - ZFS (supports: rootdir, images - NO templates)"
-echo -e "  ${YELLOW}nfs${NC}       - NFS (supports: rootdir, vztmpl, images, etc.)"
-echo ""
-echo -e "${BLUE}For GitLab LXC you need:${NC}"
-echo -e "  ${GREEN}●${NC} STORAGE: Any type supporting 'rootdir' (for container disk)"
-echo -e "  ${GREEN}●${NC} TEMPLATE_STORAGE: Type 'dir' or 'nfs' (for Debian template)"
-echo ""
-echo -e "${YELLOW}Note: If you only have 'local-lvm', you need to use 'local' for templates!${NC}"
-echo ""
-
-echo -e "${CYAN}════════════════════════════════════════════════════════════${NC}"
+msg_ok "Completed Successfully!\n"
+echo -e "${CREATING}${GN}${APP} setup has been successfully initialized!${CL}"
+echo -e "${INFO}${YW} Access it using the following URL:${CL}"
+echo -e "${TAB}${GATEWAY}${BGN}${GITLAB_EXTERNAL_URL}${CL}"
+echo -e ""
+echo -e "${INFO}${YW} Default credentials:${CL}"
+echo -e "${TAB}${GATEWAY}${BGN}Username: root${CL}"
+echo -e "${TAB}${GATEWAY}${BGN}Email: ${GITLAB_ROOT_EMAIL}${CL}"
+echo -e "${TAB}${GATEWAY}${BGN}Password: ${GITLAB_ROOT_PASSWORD}${CL}"
+echo -e ""
+echo -e "${INFO}${YW} Important commands:${CL}"
+echo -e "${TAB}${GATEWAY}${BGN}gitlab-ctl status${CL}      - Check status"
+echo -e "${TAB}${GATEWAY}${BGN}gitlab-ctl restart${CL}     - Restart GitLab"
+echo -e "${TAB}${GATEWAY}${BGN}gitlab-ctl reconfigure${CL} - Reconfigure GitLab"
+echo -e "${TAB}${GATEWAY}${BGN}gitlab-rake gitlab:check${CL} - Health check"
+echo -e ""
+echo -e "${INFO}${YW} Note: GitLab may take a few minutes to fully start${CL}"
