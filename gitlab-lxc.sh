@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-source <(curl -fsSL https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/misc/build.func)
+source <(curl -fsSL https://raw.githubusercontent.com/SidibooFR/proxmoxScript/refs/heads/main/build_func.sh)
 # Copyright (c) 2021-2025 community-scripts ORG
 # License: MIT
 # GitLab CE Installation Script for Proxmox LXC
