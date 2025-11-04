@@ -23,6 +23,11 @@ variables
 color
 catch_errors
 
+# Correction : redéfinir silent() pour éviter les conflits avec trap ERR
+silent() {
+  "$@" >/dev/null 2>&1 || return $?
+}
+
 function update_script() {
   header_info
   
