@@ -64,10 +64,17 @@ $STD apt-get install -y \
 msg_ok "Installed Dependencies"
 
 msg_info "Adding GitLab Repository"
-curl -fsSL https://packages.gitlab.com/install/repositories/gitlab/gitlab-ce/script.deb.sh -o /tmp/gitlab_install.sh
-chmod +x /tmp/gitlab_install.sh
-os=${var_os} dist=${var_version} /tmp/gitlab_install.sh
-rm -f /tmp/gitlab_install.sh
+# Add GitLab GPG key
+curl -fsSL https://packages.gitlab.com/gitlab/gitlab-ce/gpgkey | gpg --dearmor -o /etc/apt/trusted.gpg.d/gitlab_gitlab-ce.gpg
+
+# Add GitLab repository for Debian 12 (bookworm)
+cat > /etc/apt/sources.list.d/gitlab_gitlab-ce.list <<EOF
+deb https://packages.gitlab.com/gitlab/gitlab-ce/debian/ bookworm main
+deb-src https://packages.gitlab.com/gitlab/gitlab-ce/debian/ bookworm main
+EOF
+
+# Update package list
+$STD apt-get update
 msg_ok "Added GitLab Repository"
 
 msg_info "Installing GitLab CE (this may take several minutes)"
