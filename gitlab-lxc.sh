@@ -64,7 +64,7 @@ $STD apt-get install -y \
 msg_ok "Installed Dependencies"
 
 msg_info "Adding GitLab Repository"
-curl -fsSL https://packages.gitlab.com/install/repositories/gitlab/gitlab-ce/script.deb.sh | bash
+curl -fsSL https://packages.gitlab.com/install/repositories/gitlab/gitlab-ce/script.deb.sh | os=${var_os} dist=${var_version} bash
 msg_ok "Added GitLab Repository"
 
 msg_info "Installing GitLab CE (this may take several minutes)"
